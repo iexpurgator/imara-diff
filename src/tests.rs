@@ -1,4 +1,10 @@
-use crate::{Algorithm, BasicLineDiffPrinter, Diff, InternedInput, UnifiedDiffConfig};
+#[cfg(feature = "unified_diff")]
+use alloc::string::ToString;
+
+use crate::{Algorithm, Diff, InternedInput};
+#[cfg(feature = "unified_diff")]
+use crate::{BasicLineDiffPrinter, UnifiedDiffConfig};
+#[cfg(feature = "unified_diff")]
 use expect_test::expect;
 
 #[test]
@@ -13,7 +19,8 @@ fn myers_is_even() {
     // is buggy in more subtle ways
     cov_mark::check_count!(SPLIT_SEARCH_ITER, 15);
     let input = InternedInput::new(before, after);
-    let diff = Diff::compute(Algorithm::Myers, &input);
+    let _diff = Diff::compute(Algorithm::Myers, &input);
+    #[cfg(feature = "unified_diff")]
     expect![[r#"
         @@ -1,5 +1,5 @@
         -a
@@ -25,7 +32,7 @@ fn myers_is_even() {
         +x
     "#]]
     .assert_eq(
-        &diff
+        &_diff
             .unified_diff(
                 &BasicLineDiffPrinter(&input.interner),
                 UnifiedDiffConfig::default(),
@@ -46,7 +53,8 @@ fn myers_is_odd() {
     // iterations increases
     cov_mark::check_count!(SPLIT_SEARCH_ITER, 9);
     let input = InternedInput::new(before, after);
-    let diff = Diff::compute(Algorithm::Myers, &input);
+    let _diff = Diff::compute(Algorithm::Myers, &input);
+    #[cfg(feature = "unified_diff")]
     expect![[r#"
         @@ -1,5 +1,4 @@
         -a
@@ -57,7 +65,7 @@ fn myers_is_odd() {
         -x
     "#]]
     .assert_eq(
-        &diff
+        &_diff
             .unified_diff(
                 &BasicLineDiffPrinter(&input.interner),
                 UnifiedDiffConfig::default(),
@@ -65,4 +73,55 @@ fn myers_is_odd() {
             )
             .to_string(),
     );
+}
+
+#[test]
+fn preset_cancel_flag_skips_edit_search() {
+    // All tokens occur on both sides, so preprocessing cannot mark them changed.
+    let input = InternedInput::new("a\nb\nc\nd\n", "b\na\nd\nc\n");
+    let cancel = core::sync::atomic::AtomicBool::new(true);
+    for algorithm in [
+        Algorithm::Histogram,
+        Algorithm::Myers,
+        Algorithm::MyersMinimal,
+    ] {
+        let cancelled = Diff::compute_cancellable(algorithm, &input, &cancel);
+        assert!(
+            cancelled.removed.iter().all(|&changed| !changed),
+            "{algorithm:?}"
+        );
+        assert!(
+            cancelled.added.iter().all(|&changed| !changed),
+            "{algorithm:?}"
+        );
+        assert!(Diff::compute(algorithm, &input).count_removals() > 0);
+    }
+}
+
+#[test]
+fn cancel_unset_matches_compute() {
+    // With a cancel flag that is never set, the cancellable path must produce
+    // exactly the same edit script as the normal path.
+    let before = "a\nb\nc\nd\ne\nf\n";
+    let after = "a\nX\nc\nd\nY\nf\nZ\n";
+    let input = InternedInput::new(before, after);
+    let never = core::sync::atomic::AtomicBool::new(false);
+    for algorithm in [
+        Algorithm::Histogram,
+        Algorithm::Myers,
+        Algorithm::MyersMinimal,
+    ] {
+        let plain = Diff::compute(algorithm, &input);
+        let cancellable = Diff::compute_cancellable(algorithm, &input, &never);
+        assert_eq!(
+            plain.count_removals(),
+            cancellable.count_removals(),
+            "{algorithm:?}: removals differ"
+        );
+        assert_eq!(
+            plain.count_additions(),
+            cancellable.count_additions(),
+            "{algorithm:?}: additions differ"
+        );
+    }
 }

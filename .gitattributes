@@ -1,0 +1,2 @@
+# These inputs and expected patches must use the same line endings on every OS.
+tests/helix_syntax.rs.* text eol=lf

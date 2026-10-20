@@ -3,7 +3,7 @@
 //! This module provides implementations of [`TokenSource`] for
 //! strings and byte slices, splitting them into lines by default.
 
-use std::str::from_utf8_unchecked;
+use core::str::from_utf8_unchecked;
 
 use memchr::memchr;
 
@@ -23,6 +23,11 @@ pub fn lines(data: &str) -> Lines<'_> {
 /// other characters are their own word.
 pub fn words(data: &str) -> Words<'_> {
     Words(data)
+}
+
+/// Returns a [`TokenSource`] that uses the characters in `data` as Tokens
+pub fn chars(data: &str) -> core::str::Chars<'_> {
+    data.chars()
 }
 
 /// Returns a [`TokenSource`] that uses the lines in `data` as Tokens. The newline
@@ -139,6 +144,20 @@ impl<'a> TokenSource for Words<'a> {
     }
 }
 
+impl<'a> TokenSource for core::str::Chars<'a> {
+    type Token = char;
+
+    type Tokenizer = Self;
+
+    fn tokenize(&self) -> Self::Tokenizer {
+        self.clone()
+    }
+
+    fn estimate_tokens(&self) -> u32 {
+        self.as_str().len() as u32
+    }
+}
+
 /// A [`TokenSource`] that returns the lines of a byte slice as tokens. See [`byte_lines`]
 /// for details.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -170,10 +189,6 @@ impl<'a> TokenSource for ByteLines<'a> {
 
     fn estimate_tokens(&self) -> u32 {
         let len: usize = self.take(20).map(|line| line.len()).sum();
-        if len == 0 {
-            100
-        } else {
-            (self.0.len() * 20 / len) as u32
-        }
+        (self.0.len() * 20).checked_div(len).unwrap_or(100) as u32
     }
 }

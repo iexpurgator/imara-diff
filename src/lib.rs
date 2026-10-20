@@ -1,4 +1,5 @@
 #![deny(missing_docs)]
+#![no_std]
 //! Imara-diff is a solid (imara in Swahili) diff library for Rust.
 //! Solid refers to the fact that imara-diff provides very good runtime performance even
 //! in pathological cases so that your application never appears to freeze while waiting on a diff.
@@ -90,7 +91,7 @@
 //! order that they appear in the input.
 //!
 //! Finally, if the `unified_diff` feature is enabled, a diff can be printed with
-//! [`Diff::unified_diff`] to print a unified diff/patch as shown by `git diff` or `diff
+//! `Diff::unified_diff` to print a unified diff/patch as shown by `git diff` or `diff
 //! -u`. Note that while the unified diff has a decent amount of flexibility, it is fairly
 //! simplistic and not every formatting may be possible. It's meant to cover common
 //! situations but not cover every advanced use case. Instead, if you need more advanced
@@ -98,6 +99,10 @@
 //! take inspiration from the built-in printer.
 //!
 //! ```
+//! # #[cfg(not(feature = "unified_diff"))]
+//! # fn main() {}
+//! # #[cfg(feature = "unified_diff")]
+//! # fn main() {
 //! # use imara_diff::{InternedInput, Diff, Algorithm, BasicLineDiffPrinter, UnifiedDiffConfig};
 //! #
 //!
@@ -140,15 +145,28 @@
 //! +// foo
 //! "#
 //! );
+//! # }
 //! ```
 
-use std::ops::Range;
-use std::slice;
+#[macro_use]
+extern crate alloc;
+
+use alloc::vec::Vec;
+use core::hash::Hash;
+use core::ops::Range;
+use core::slice;
+use core::sync::atomic::{AtomicBool, Ordering};
 
 use crate::{
-    sources::words,
+    sources::{chars, words},
     util::{strip_common_postfix, strip_common_prefix},
 };
+
+/// Checks the optional cancellation flag between algorithm steps.
+#[inline]
+pub(crate) fn is_cancelled(cancel: Option<&AtomicBool>) -> bool {
+    cancel.is_some_and(|c| c.load(Ordering::Relaxed))
+}
 
 pub use crate::slider_heuristic::{
     IndentHeuristic, IndentLevel, NoSliderHeuristic, SliderHeuristic,
@@ -240,8 +258,8 @@ pub struct Diff {
     added: Vec<bool>,
 }
 
-impl std::fmt::Debug for Diff {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Debug for Diff {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_list().entries(self.hunks()).finish()
     }
 }
@@ -260,14 +278,66 @@ impl Diff {
         diff
     }
 
+    /// Like [`Diff::compute`], but returns early once `cancel` is set to `true`.
+    ///
+    /// This is meant for callers that run the diff on a worker thread and may
+    /// stop needing the result, for example because the user moved on, or
+    /// because another algorithm racing on the same input finished first.
+    /// The flag is checked at the top of every step of the algorithm's main
+    /// loop, so a histogram LCS search or Myers middle-snake split already in
+    /// progress completes before cancellation is observed. Input preprocessing
+    /// is not cancellable.
+    ///
+    /// When cancellation fires, the returned [`Diff`] is **incomplete and must
+    /// be discarded**; nothing about its contents is specified. With a flag
+    /// that is never set, the result is identical to [`Diff::compute`].
+    pub fn compute_cancellable<T>(
+        algorithm: Algorithm,
+        input: &InternedInput<T>,
+        cancel: &AtomicBool,
+    ) -> Diff {
+        let mut diff = Diff::default();
+        diff.compute_with_cancellable(
+            algorithm,
+            &input.before,
+            &input.after,
+            input.interner.num_tokens(),
+            cancel,
+        );
+        diff
+    }
+
     /// Computes an edit-script that transforms `before` into `after` using
     /// the specified `algorithm`.
     pub fn compute_with(
         &mut self,
         algorithm: Algorithm,
+        before: &[Token],
+        after: &[Token],
+        num_tokens: u32,
+    ) {
+        self.compute_with_impl(algorithm, before, after, num_tokens, None);
+    }
+
+    /// Like [`Diff::compute_with`], but cancellable. See [`Diff::compute_cancellable`].
+    pub fn compute_with_cancellable(
+        &mut self,
+        algorithm: Algorithm,
+        before: &[Token],
+        after: &[Token],
+        num_tokens: u32,
+        cancel: &AtomicBool,
+    ) {
+        self.compute_with_impl(algorithm, before, after, num_tokens, Some(cancel));
+    }
+
+    fn compute_with_impl(
+        &mut self,
+        algorithm: Algorithm,
         mut before: &[Token],
         mut after: &[Token],
         num_tokens: u32,
+        cancel: Option<&AtomicBool>,
     ) {
         assert!(
             before.len() < i32::MAX as usize,
@@ -290,9 +360,11 @@ impl Diff {
         let range = common_prefix..self.added.len() - common_postfix as usize;
         let added = &mut self.added[range];
         match algorithm {
-            Algorithm::Histogram => histogram::diff(before, after, removed, added, num_tokens),
-            Algorithm::Myers => myers::diff(before, after, removed, added, false),
-            Algorithm::MyersMinimal => myers::diff(before, after, removed, added, true),
+            Algorithm::Histogram => {
+                histogram::diff(before, after, removed, added, num_tokens, cancel)
+            }
+            Algorithm::Myers => myers::diff(before, after, removed, added, false, cancel),
+            Algorithm::MyersMinimal => myers::diff(before, after, removed, added, true, cancel),
         }
     }
 
@@ -416,17 +488,18 @@ impl Hunk {
 
     /// Performs a word-diff on this hunk.
     ///
-    /// This requires passing the original [`input`](InternedInput) in order to look up
-    /// the tokens of the current hunk, which typically are lines.
-    /// Each token is split into words using the built-in [`words`] tokenizer.
-    /// The resulting word tokens are stored in a second [`diff_input`](InternedInput),
-    /// and a [`diff`](Diff) is computed on them, with basic post-processing applied.
+    /// This requires passing the original [`input`](InternedInput) in order to
+    /// look up the tokens of the current hunk, which typically are lines. Each
+    /// token is split into words using the built-in [`words`] tokenizer. The
+    /// resulting word tokens are stored in a second
+    /// [`word_tokens`](InternedInput), and a [`diff`](Diff) is computed on
+    /// them, with basic post-processing applied.
     ///
-    /// For performance reasons, this second [`diff_input`](InternedInput) as well as
-    /// the computed [`diff`](Diff) need to be passed as parameters so that they can be
-    /// re-used when iterating over hunks. Note that word tokens are always
-    /// added but never removed from the interner. Consider clearing it if you expect
-    /// your input to have a large vocabulary.
+    /// For performance reasons, this second [`word_tokens`](InternedInput) as
+    /// well as the computed [`diff`](Diff) need to be passed as parameters so
+    /// that they can be re-used when iterating over hunks. Note that word
+    /// tokens are always added but never removed from the interner. Consider
+    /// clearing it if you expect your input to have a large vocabulary.
     ///
     /// # Examples
     ///
@@ -457,23 +530,87 @@ impl Hunk {
         word_tokens: &mut InternedInput<&'a str>,
         diff: &mut Diff,
     ) {
+        self.granular_diff(words, input, word_tokens, diff)
+    }
+
+    /// Performs a character-diff of the hunk.
+    ///
+    /// This requires passing the original [`input`](InternedInput) in order to
+    /// look up the tokens of the current hunk, which typically are lines or
+    /// words. Each token is split into characters using the built-in [`chars`]
+    /// tokenizer which simply calls `str::chars` directly. The resulting
+    /// character tokens are stored in a second [`char_tokens`](InternedInput),
+    /// and a [`diff`](Diff) is computed on them, with basic post-processing
+    /// applied.
+    ///
+    /// For performance reasons, this second [`char_tokens`](InternedInput) as
+    /// well as the computed [`diff`](Diff) need to be passed as parameters so
+    /// that they can be re-used when iterating over hunks. Note that character
+    /// tokens are always added but never removed from the interner. Consider
+    /// clearing it if you expect your input to have a large alphabet.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use imara_diff::{InternedInput, Diff, Algorithm};
+    /// // Compute diff normally
+    /// let before = "before text";
+    /// let after = "after text";
+    /// let mut lines = InternedInput::new(before, after);
+    /// let mut diff = Diff::compute(Algorithm::Histogram, &lines);
+    /// diff.postprocess_lines(&lines);
+    ///
+    /// // Compute char-diff per hunk, reusing allocations across iterations
+    /// let mut hunk_diff_input = InternedInput::default();
+    /// let mut hunk_diff = Diff::default();
+    /// for hunk in diff.hunks() {
+    ///   hunk.char_diff(&lines, &mut hunk_diff_input, &mut hunk_diff);
+    ///   let added = hunk_diff.count_additions();
+    ///   let removed = hunk_diff.count_removals();
+    ///   println!("char-diff of this hunk has {added} additions and {removed} removals");
+    ///   // optionally, clear the interner:
+    ///   hunk_diff_input.clear();
+    /// }
+    /// ```
+    pub fn char_diff(
+        &self,
+        input: &InternedInput<&str>,
+        char_tokens: &mut InternedInput<char>,
+        diff: &mut Diff,
+    ) {
+        self.granular_diff(chars, input, char_tokens, diff)
+    }
+
+    /// Performs a granular diff of the hunk based on a given tokenizer. For
+    /// instance, this can be used to compute a word-diff.
+    pub fn granular_diff<'a, F, I, T>(
+        &self,
+        tokenizer: F,
+        input: &InternedInput<&'a str>,
+        diff_input: &mut InternedInput<T>,
+        diff: &mut Diff,
+    ) where
+        F: Fn(&'a str) -> I,
+        I: Iterator<Item = T>,
+        T: Eq + Hash,
+    {
         let Hunk { before, after } = self.clone();
-        word_tokens.update_before(
+        diff_input.update_before(
             before
                 .map(|index| input.before[index as usize])
                 .map(|token| input.interner[token])
-                .flat_map(|line| words(line)),
+                .flat_map(&tokenizer),
         );
-        word_tokens.update_after(
+        diff_input.update_after(
             after
                 .map(|index| input.after[index as usize])
                 .map(|token| input.interner[token])
-                .flat_map(|line| words(line)),
+                .flat_map(&tokenizer),
         );
         diff.removed.clear();
-        diff.removed.resize(word_tokens.before.len(), false);
+        diff.removed.resize(diff_input.before.len(), false);
         diff.added.clear();
-        diff.added.resize(word_tokens.after.len(), false);
+        diff.added.resize(diff_input.after.len(), false);
         if self.is_pure_removal() {
             diff.removed.fill(true);
         } else if self.is_pure_insertion() {
@@ -481,11 +618,11 @@ impl Hunk {
         } else {
             diff.compute_with(
                 Algorithm::Myers,
-                &word_tokens.before,
-                &word_tokens.after,
-                word_tokens.interner.num_tokens(),
+                &diff_input.before,
+                &diff_input.after,
+                diff_input.interner.num_tokens(),
             );
-            diff.postprocess_no_heuristic(word_tokens);
+            diff.postprocess_no_heuristic(diff_input);
         }
     }
 }

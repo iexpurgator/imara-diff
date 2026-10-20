@@ -1,6 +1,9 @@
-use std::ptr::NonNull;
+use alloc::boxed::Box;
+use core::ptr::NonNull;
+use core::sync::atomic::AtomicBool;
 
 use crate::intern::Token;
+use crate::is_cancelled;
 use crate::myers::middle_snake::{MiddleSnakeSearch, SearchResult};
 use crate::myers::slice::FileSlice;
 use crate::util::sqrt;
@@ -24,6 +27,7 @@ pub fn diff(
     removed: &mut [bool],
     added: &mut [bool],
     minimal: bool,
+    cancel: Option<&AtomicBool>,
 ) {
     // Preprocess the files by removing parts of the file that are not contained in the other file at all.
     // This process remaps the token indices so we have to account for that during the rest of the diff
@@ -34,6 +38,7 @@ pub fn diff(
         FileSlice::new(&before, removed),
         FileSlice::new(&after, added),
         minimal,
+        cancel,
     );
 }
 
@@ -81,8 +86,18 @@ impl Myers {
         }
     }
 
-    fn run<'f>(&mut self, mut file1: FileSlice<'f>, mut file2: FileSlice<'f>, mut need_min: bool) {
+    fn run<'f>(
+        &mut self,
+        mut file1: FileSlice<'f>,
+        mut file2: FileSlice<'f>,
+        mut need_min: bool,
+        cancel: Option<&AtomicBool>,
+    ) {
         loop {
+            // The caller no longer wants the result; the partial diff is discarded.
+            if is_cancelled(cancel) {
+                return;
+            }
             file1.strip_common(&mut file2);
 
             if file1.is_empty() {
@@ -98,6 +113,7 @@ impl Myers {
                 file1.borrow().slice(..split.token_idx1 as u32),
                 file2.borrow().slice(..split.token_idx2 as u32),
                 split.minimized_lo,
+                cancel,
             );
 
             file1 = file1.slice(split.token_idx1 as u32..);
