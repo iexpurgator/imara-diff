@@ -122,6 +122,7 @@ fn simple_insert() {
                foo *= 100 / 2;
           +    println("hello world")
            }
+          \ No newline at end of file
           "#]]
         .assert_eq(
             &diff
@@ -144,6 +145,7 @@ fn simple_insert() {
                  foo *= 100 / 2;
             -    println("hello world")
              }
+            \ No newline at end of file
             "#]]
         .assert_eq(
             &diff

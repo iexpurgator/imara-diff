@@ -24,6 +24,69 @@ cases to avoid quadratic time complexity and closely matches the behavior of gnu
 The histogram algorithm was originally ported from git but has been heavily optimized.
 The **Histogram algorithm outperforms Myers algorithm** by 10% - 100% across a **wide variety of workloads**.
 
+## Command-line binary
+
+Build without adding any dependencies:
+
+```sh
+cargo build --release --bin imara-diff
+# target/release/imara-diff (Windows: target/release/imara-diff.exe)
+```
+
+On Windows MSVC targets, `.cargo/config.toml` statically links the C runtime
+(`+crt-static`). The executable needs only Windows system DLLs, not the Visual
+C++ Redistributable. `RUSTFLAGS` / `CARGO_ENCODED_RUSTFLAGS` override Cargo's
+configured flags; if setting them yourself, retain `-C target-feature=+crt-static`.
+
+GitHub builds/releases are **manual-only**: see [the run guide](docs/manual-builds.md).
+Release tags and filenames use `REPO-YY.DAYOFYEAR.N` (UTC, two-digit year,
+daily counter from `0`), and the compiled CLI reports that build version.
+Each `.zip` / `.tar.gz` has a matching `.sha256` sidecar; the binary inside
+is simply `imara-diff.exe` / `imara-diff`, without a version/architecture suffix.
+Cargo's library version is left unchanged.
+
+Compare two UTF-8 text files without a Git repository:
+
+```sh
+imara-diff before.txt after.txt
+imara-diff --context 5 --algorithm histogram before.txt after.txt
+imara-diff -U0 --exit-code before.txt after.txt
+imara-diff --quiet before.txt after.txt
+imara-diff - after.txt < before.txt
+imara-diff -- -before.txt -after.txt
+imara-diff --help
+```
+
+- stdout contains only a unified patch with quoted `---` / `+++` file labels,
+  or nothing for identical inputs. There is no color, pager, or Git subprocess.
+- `-U N`, `-UN`, `--context N`, and `--context=N` select context lines (default
+  `3`, maximum `1048576`).
+- `--algorithm histogram|myers|myers-minimal` selects the line-diff algorithm;
+  the default is `histogram`. `myers-minimal` can be slow on pathological input.
+- `--exit-code` returns **1** for differences; without it, a successful comparison
+  returns **0** even when the files differ, like `git diff`.
+- `-q` / `--quiet` emits nothing and returns **0** for identical inputs or **1**
+  for differences. Invalid options, read/write errors, and unsupported inputs
+  always return **2**, with a diagnostic on stderr.
+- One input may be `-` to read stdin. Use `--` before option-like filenames;
+  use `./-` to refer to a file literally named `-`.
+- Files containing NUL bytes or invalid UTF-8 are rejected rather than silently
+  altered. Header filenames must also be valid Unicode; control characters and
+  non-ASCII bytes are escaped using Git's quoted-path convention.
+
+For agent plugins, invoke the binary directly with an argument array rather
+than constructing a shell command. Read stdout as the diff and stderr as the
+error channel; do not treat exit **1** as a tool failure when using
+`--exit-code` or `--quiet`. The binary reads inputs into memory, never modifies
+files, and does not silently truncate patches. Let the plugin impose its own
+process timeout and output budget, especially for large files.
+
+This replaces the **two-file comparison** use case of `git diff --no-index`,
+not repository operations such as staged/commit diffs, directory traversal,
+or rename detection. It does not provide JSON, a patch-apply command, or a GUI.
+The binary requires the `std` and `unified_diff` features (both enabled by
+default); disabling them keeps library-only `no_std` builds working.
+
 ## Limitations
 
 Even with the optimizations in this crate, performing a large diff without any tokenization (like character diff for a string) does not perform well.

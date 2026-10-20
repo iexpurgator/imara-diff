@@ -140,7 +140,8 @@ impl<T: AsRef<[u8]> + ?Sized> EndsWithNewline for T {
 ///
 /// This printer formats diffs in the standard unified diff format commonly used by
 /// tools like `git diff` and `diff -u`. It displays removed lines with a `-` prefix
-/// and added lines with a `+` prefix.
+/// and added lines with a `+` prefix. Lines without a trailing newline are followed
+/// by the standard `\ No newline at end of file` marker.
 pub struct BasicLineDiffPrinter<'a, T: EndsWithNewline + ?Sized + Hash + Eq + Display>(
     /// A reference to the interner containing the line data.
     pub &'a Interner<&'a T>,
@@ -160,9 +161,9 @@ impl<T: EndsWithNewline + Hash + Eq + Display + ?Sized> UnifiedDiffPrinter
         writeln!(
             f,
             "@@ -{},{} +{},{} @@",
-            start_before + 1,
+            start_before + u32::from(len_before != 0),
             len_before,
-            start_after + 1,
+            start_after + u32::from(len_after != 0),
             len_after
         )
     }
@@ -170,7 +171,7 @@ impl<T: EndsWithNewline + Hash + Eq + Display + ?Sized> UnifiedDiffPrinter
     fn display_context_token(&self, mut f: impl fmt::Write, token: Token) -> fmt::Result {
         write!(f, " {}", self.0[token])?;
         if !&self.0[token].ends_with_newline() {
-            writeln!(f)?;
+            writeln!(f, "\n\\ No newline at end of file")?;
         }
         Ok(())
     }
@@ -187,7 +188,7 @@ impl<T: EndsWithNewline + Hash + Eq + Display + ?Sized> UnifiedDiffPrinter
                 write!(f, "-{token}")?;
             }
             if !self.0[last].ends_with_newline() {
-                writeln!(f)?;
+                writeln!(f, "\n\\ No newline at end of file")?;
             }
         }
         if let Some(&last) = after.last() {
@@ -196,7 +197,7 @@ impl<T: EndsWithNewline + Hash + Eq + Display + ?Sized> UnifiedDiffPrinter
                 write!(f, "+{token}")?;
             }
             if !self.0[last].ends_with_newline() {
-                writeln!(f)?;
+                writeln!(f, "\n\\ No newline at end of file")?;
             }
         }
         Ok(())

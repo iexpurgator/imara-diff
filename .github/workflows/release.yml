@@ -1,0 +1,153 @@
+name: Manual multi-platform release
+run-name: Manual ${{ inputs.profile }} build by ${{ github.actor }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: 'core: 13 main targets; extended: all 46 candidates (some build-only)'
+        type: choice
+        options:
+          - core
+          - extended
+        default: core
+      draft:
+        description: 'Create a draft release for inspection before publishing'
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+env:
+  PYTHONUTF8: '1'
+  CARGO_TERM_COLOR: never
+
+jobs:
+  prepare:
+    name: Reserve UTC build version
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      repo: ${{ steps.version.outputs.repo }}
+      matrix: ${{ steps.version.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.x'
+      - name: Test release helpers before reserving a tag
+        run: python -m unittest discover -s ci -p 'test_*.py' -v
+      - name: Allocate REPO-YY.DAYOFYEAR.N atomically
+        id: version
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PROFILE: ${{ inputs.profile }}
+        run: python ci/release.py version --profile "$PROFILE"
+
+  build:
+    name: Build ${{ matrix.target }}
+    needs: prepare
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      TARGET: ${{ matrix.target }}
+      RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+      RELEASE_REPO: ${{ needs.prepare.outputs.repo }}
+      IMARA_DIFF_BUILD_VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.x'
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
+        with:
+          toolchain: '1.98.1'
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
+        with:
+          key: release-${{ matrix.target }}-${{ matrix.tool }}
+      - name: Install pinned Zig build tools
+        if: matrix.tool == 'zig'
+        run: python -m pip install --disable-pip-version-check cargo-zigbuild==0.23.4 ziglang==0.14.1
+      - name: Install Linux compatibility/emulation runtime
+        if: matrix.tool == 'zig'
+        run: |
+          if [[ "$TARGET" == armv7-* ]]; then
+            sudo apt-get update
+            sudo apt-get install -y qemu-user libc6-armhf-cross
+          elif [[ "$TARGET" == i686-* ]]; then
+            sudo apt-get update
+            sudo apt-get install -y qemu-user libc6-i386
+          fi
+      - name: Install pinned cross source for extended probes
+        if: matrix.tool == 'cross'
+        run: cargo install --locked --git https://github.com/cross-rs/cross --rev 526d03ddcd2f70e683074b3ea6f75ed300f33132 cross
+      - name: Build, validate actual artifact, and archive
+        run: python ci/release.py build --target "$TARGET" --repo "$RELEASE_REPO" --version "$RELEASE_VERSION" --sha "$GITHUB_SHA"
+      - name: Upload this target's archive, checksum, and metadata
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: binary-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+  publish:
+    name: Validate manifest and create release (never overwrite)
+    needs:
+      - prepare
+      - build
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    env:
+      RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+      RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+      RELEASE_REPO: ${{ needs.prepare.outputs.repo }}
+      PROFILE: ${{ inputs.profile }}
+      DRAFT: ${{ inputs.draft }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.x'
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          pattern: binary-*
+          path: dist
+          merge-multiple: true
+      - name: Require every requested artifact and verify its identity/checksum
+        run: python ci/release.py manifest --profile "$PROFILE" --repo "$RELEASE_REPO" --version "$RELEASE_VERSION" --sha "$GITHUB_SHA"
+      - name: Publish a new release only
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          flags=()
+          if [[ "$DRAFT" == "true" ]]; then flags+=(--draft); fi
+          # No --clobber, no delete, and no updating an existing release/tag.
+          gh release create --verify-tag --title "$RELEASE_TAG" --notes-file dist/release-notes.md \
+            "${flags[@]}" -- "$RELEASE_TAG" dist/*.zip dist/*.tar.gz dist/*.sha256 dist/SHA256SUMS dist/build-manifest.json

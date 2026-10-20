@@ -17,6 +17,11 @@ exclude = [
     "plt.py",
 ]
 
+[[bin]]
+name = "imara-diff"
+path = "src/main.rs"
+required-features = ["std", "unified_diff"]
+
 [dependencies]
 hashbrown = { version = ">=0.15,<=0.16", default-features = false, features = ["default-hasher", "inline-more"] }
 memchr = { version = "2.7.4", default-features = false }

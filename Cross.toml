@@ -1,0 +1,3 @@
+[build.env]
+# The published CLI version must reach rustc inside the cross container.
+passthrough = ["IMARA_DIFF_BUILD_VERSION"]

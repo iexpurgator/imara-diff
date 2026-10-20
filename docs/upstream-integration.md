@@ -1,5 +1,8 @@
 # Upstream integration
 
+For the subsequent complete-reproducer checks and additional roundtrip fixes,
+see [Open upstream issue bug review](issue-bug-review.md).
+
 ## Scope and execution
 
 Upstream: <https://github.com/pascalkuthe/imara-diff>.

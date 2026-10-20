@@ -1,0 +1,41 @@
+<div align="center">
+    hell world
+       <img align="center" width="128px" src="crates/gitbutler-tauri/icons/128x128@2x.png" />
+ <h1 align="center"><b>GitButler</b></h1>
+ <p align="center">
+		Git branch management tool, built from the ground up for modern workflows
+        <br />
+        <a href="https://gitbutler.com"><strong>gitbutler.com »</strong></a>
+        <br />
+        <br />
+        <b>Download for </b>
+        macOS (<a href="https://app.gitbutler.com/downloads/release/darwin/aarch64/dmg">Apple Silicon</a> |
+          <a href="https://app.gitbutler.com/downloads/release/darwin/x86_64/dmg">Intel</a>) ·
+		Linux (<a href="https://app.gitbutler.com/downloads/release/linux/x86_64/gz">AppImage</a> |
+           <a href="https://app.gitbutler.com/downloads/release/linux/x86_64/deb">deb</a>)
+          ·
+		Windows (<a href="https://app.gitbutler.com/downloads/release/windows/x86_64/msi">msi</a>)
+        <br />
+        <br />
+        (Unstable Nightly releases can be found <a href="https://app.gitbutler.com/downloads">here</a>)
+      </p>
+    </div>
+
+    ![Alt](https://repobeats.axiom.co/api/embed/fb23382bcf57c609832661874d3019a43555d6ae.svg 'Repobeats analytics for GitButler')
+
+    blah
+    You can then push branches individually to your remote, or directly create pull requests.
+
+    In a nutshell, it's a more flexible version of `git add -p` and `git rebase -i`, allowing you to efficiently multitask across branches.
+
+    ## Contributing
+
+    So you want to help out? Please check out the [CONTRIBUTING.md](CONTRIBUTING.md)
+    document.
+
+    If you want to skip right to getting the code to actually compile, take a look
+    at the [DEVELOPMENT.md](DEVELOPMENT.md) file.
+
+    Want to show your support? Add a GitButler badge to your project's README:
+
+    [![BADGE][s6]][l6]

@@ -1,2 +1,5 @@
 /target
 /bench_data
+/dist/
+/docs/superpowers/
+__pycache__/

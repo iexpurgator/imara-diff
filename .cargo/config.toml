@@ -1,0 +1,3 @@
+# Link the C runtime statically; Windows MSVC binaries need only system DLLs.
+[target.'cfg(all(target_os = "windows", target_env = "msvc"))']
+rustflags = ["-C", "target-feature=+crt-static"]

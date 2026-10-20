@@ -1,2 +1,5 @@
 # These inputs and expected patches must use the same line endings on every OS.
 tests/helix_syntax.rs.* text eol=lf
+tests/fixtures/issue-21.* text eol=lf
+# A blank context line in a unified patch consists of a single space.
+tests/fixtures/*.diff whitespace=-blank-at-eol
