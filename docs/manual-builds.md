@@ -164,6 +164,13 @@ Plugin phải phân biệt x64/ARM64/x86 và GNU/musl khi chọn asset.
 
 ## 6. Quyền, lỗi và chạy lại
 
+Job **Release** trên Windows/macOS cũng chạy `cargo test` sau khi build/smoke;
+log test lỗi ở đây không có nghĩa là đang chạy workflow **Manual CI**. Fuzzing
+chỉ thuộc Manual CI.
+
+Sau khi sửa source, cần commit/push rồi **Run workflow mới** ở branch đã cập
+nhật. Re-run của một run cũ vẫn dùng commit SHA cũ, không tự nhận bản sửa mới.
+
 - Không cần PAT để release vào chính fork. `GITHUB_TOKEN` được cấp
   `contents: write` chỉ ở prepare/publish; build jobs chỉ đọc.
 - Nếu nhận HTTP 403, kiểm tra Actions policy của repo/org và ruleset bảo vệ

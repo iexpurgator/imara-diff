@@ -4,21 +4,16 @@ use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Command, Output, Stdio};
-use std::time::{SystemTime, UNIX_EPOCH};
+
+#[path = "support/temp_dir.rs"]
+mod temp_dir;
 
 struct Files(PathBuf);
 
 impl Files {
     fn new(before: &[u8], after: &[u8]) -> Self {
-        let path = std::env::temp_dir().join(format!(
-            "imara-diff-cli-{}-{}",
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        fs::create_dir(&path).unwrap();
+        let base = std::env::temp_dir().join(format!("imara-diff-cli-{}", std::process::id()));
+        let path = temp_dir::create_temp_dir(&base);
         fs::write(path.join("before.txt"), before).unwrap();
         fs::write(path.join("after.txt"), after).unwrap();
         Self(path)

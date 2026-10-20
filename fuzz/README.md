@@ -31,7 +31,13 @@ cargo +nightly fuzz coverage comprehensive_diff
 
 ## CI Integration
 
-Fuzz tests are automatically run in CI for 3 minutes total (45 seconds per target × 4 targets) to ensure no regressions in robustness.
+The **Manual CI** workflow runs fuzz tests when explicitly dispatched: 45 seconds per target × 4 targets. The **Release** workflow runs regular workspace tests on Windows/macOS but does not launch fuzzing.
+
+The unified diff fuzzer and `tests/fuzz_regressions.rs` share the same line validator. It accepts the exact standard `\ No newline at end of file` annotation, not arbitrary lines beginning with `\`. The minimized `before = "!", after = "", context_len = 1` case is covered without requiring nightly:
+
+```bash
+cargo test --test fuzz_regressions
+```
 
 ## Adding New Fuzz Targets
 

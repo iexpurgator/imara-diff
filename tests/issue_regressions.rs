@@ -1,5 +1,9 @@
 #![cfg(feature = "unified_diff")]
 
+#[cfg(not(miri))]
+#[path = "support/temp_dir.rs"]
+mod temp_dir;
+
 use imara_diff::{Algorithm, BasicLineDiffPrinter, Diff, InternedInput, UnifiedDiffConfig};
 
 const ALGORITHMS: [Algorithm; 3] = [
@@ -104,25 +108,18 @@ fn empty_unified_ranges_use_the_preceding_line_number() {
 #[cfg(not(miri))]
 mod git_interop {
     use super::*;
+    use crate::temp_dir::create_temp_dir;
     use std::fs;
     use std::path::PathBuf;
     use std::process::Command;
-    use std::time::{SystemTime, UNIX_EPOCH};
 
     struct TestDir(PathBuf);
 
     impl TestDir {
         fn new() -> Self {
-            let path = std::env::temp_dir().join(format!(
-                "imara-diff-issue-roundtrip-{}-{}",
-                std::process::id(),
-                SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap()
-                    .as_nanos()
-            ));
-            fs::create_dir(&path).unwrap();
-            Self(path)
+            let base = std::env::temp_dir()
+                .join(format!("imara-diff-issue-roundtrip-{}", std::process::id()));
+            Self(create_temp_dir(&base))
         }
 
         fn roundtrip(&self, before: &str, after: &str, patch: &str) {
